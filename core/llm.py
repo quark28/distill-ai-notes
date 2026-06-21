@@ -2,10 +2,14 @@ import os
 from dotenv import load_dotenv
 from mistralai.client import Mistral
 from .compressor import custom_compressor 
+import httpx
+
 
 load_dotenv()
 
 MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY")
+os.environ["HTTPS_PROXY"] = "http://127.0.0.1:10808"
+
 client = Mistral(api_key=MISTRAL_API_KEY) if MISTRAL_API_KEY else None
 
 SYSTEM_PROMPT = """Ты — умный RAG-ассистент. 

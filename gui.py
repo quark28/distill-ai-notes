@@ -1,168 +1,183 @@
-import sys
 import threading
-import tkinter as tk
-from tkinter import scrolledtext, font, messagebox
-
-try:
-    import ctypes
-    ctypes.windll.shcore.SetProcessDpiAwareness(1)
-except Exception:
-    pass
+import customtkinter as ctk
 
 class DashboardController:
     def __init__(self):
-        self.root = None
-        self.log_area = None
-        self.lbl_proxy = None
-        self.lbl_db_size = None
-        self.lbl_users_count = None
-        self.user_listbox = None
-        self.user_details = None
         self.known_users = set()
         self.db_reference = None
+        self.gui_ref = None
+        self.event_config_changed = threading.Event()
+        self.proxy_mode = False
+        self.proxy_url = ""
 
-    def log(self, tag: str, message: str):
-        if self.log_area and self.root:
-            def append():
-                self.log_area.config(state=tk.NORMAL)
-                self.log_area.insert(tk.END, f"[{tag}] {message}\n")
-                self.log_area.see(tk.END)
-                self.log_area.config(state=tk.DISABLED)
-            self.root.after(0, append)
+    def log(self, tag, message):
+        """Вывод логов и в консоль, и в интерфейс"""
+        print(f"[{tag}] {message}")
+        if self.gui_ref:
+            self.gui_ref.add_log(f"[{tag}] {message}")
 
-    def refresh_global_stats(self, proxy: str, db_size: int, users_count: int):
-        if self.root:
-            def update():
-                if self.lbl_proxy: self.lbl_proxy.config(text=f"Proxy Protocol: {proxy}")
-                if self.lbl_db_size: self.lbl_db_size.config(text=f"Total Indexed Chunks: {db_size}")
-                if self.lbl_users_count: self.lbl_users_count.config(text=f"Active Profiles: {users_count}")
-            self.root.after(0, update)
-
-    def register_user_activity(self, user_id: str):
-        if self.user_listbox and user_id not in self.known_users:
+    def register_user_activity(self, user_id):
+        """Регистрация нового пользователя"""
+        if user_id not in self.known_users:
             self.known_users.add(user_id)
-            def update_list():
-                self.user_listbox.insert(tk.END, user_id)
-                if self.lbl_users_count:
-                    self.lbl_users_count.config(text=f"Active Profiles: {len(self.known_users)}")
-            self.root.after(0, update_list)
+            if self.gui_ref:
+                self.gui_ref.add_user_to_list(user_id)
+                self.gui_ref.refresh_global_stats(len(self.known_users))
 
 ui_ctrl = DashboardController()
 
-def _on_user_select(event):
-    widget = event.widget
-    selection = widget.curselection()
-    if not selection or not ui_ctrl.db_reference: return
-    
-    user_id = widget.get(selection[0])
-    try:
-        user_records = ui_ctrl.db_reference.collection.get(where={"user_id": user_id})
-        documents = user_records.get('documents', [])
+class DashboardApp(ctk.CTk):
+    def __init__(self, bot_thread_target):
+        super().__init__()
         
-        ui_ctrl.user_details.config(state=tk.NORMAL)
-        ui_ctrl.user_details.delete("1.0", tk.END)
-        ui_ctrl.user_details.insert(tk.END, f"=== ID: {user_id} ===\n")
-        ui_ctrl.user_details.insert(tk.END, f"Raw DB Chunks: {len(documents)}\n\n")
+        ui_ctrl.gui_ref = self 
         
-        for idx, doc in enumerate(documents, 1):
-            ui_ctrl.user_details.insert(tk.END, f"--- Chunk #{idx} ---\n{doc.strip()}\n\n")
-            
-        ui_ctrl.user_details.config(state=tk.DISABLED)
-    except Exception as e:
-        ui_ctrl.log("SYSTEM", f"DB fetch error: {e}")
-
-def create_clean_gui(bot_thread_target):
-    root = tk.Tk()
-    root.title("Distill AI - Core Dashboard")
-    root.geometry("900x600")
-    root.minsize(800, 500) 
-    
-    bg_color, panel_color, text_color, accent_color = "#0F172A", "#1E293B", "#F8FAFC", "#38BDF8"
-    root.configure(bg=bg_color)
-    ui_ctrl.root = root
-
-    font_main = font.Font(family="Segoe UI", size=10)
-    font_bold = font.Font(family="Segoe UI", size=10, weight="bold")
-
-    # Header
-    header_frame = tk.Frame(root, bg=panel_color, bd=0)
-    header_frame.pack(fill=tk.X, padx=10, pady=10)
-    
-    ui_ctrl.lbl_proxy = tk.Label(header_frame, text="Proxy Protocol: INIT", bg=panel_color, fg=accent_color, font=font_bold)
-    ui_ctrl.lbl_proxy.pack(side=tk.LEFT, padx=15, pady=10)
-    ui_ctrl.lbl_users_count = tk.Label(header_frame, text="Active Profiles: 0", bg=panel_color, fg=text_color, font=font_bold)
-    ui_ctrl.lbl_users_count.pack(side=tk.LEFT, padx=15, pady=10)
-    ui_ctrl.lbl_db_size = tk.Label(header_frame, text="Total Indexed Chunks: 0", bg=panel_color, fg=accent_color, font=font_bold)
-    ui_ctrl.lbl_db_size.pack(side=tk.RIGHT, padx=15, pady=10)
-
-    # Footer
-    footer_frame = tk.Frame(root, bg=bg_color)
-    footer_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=10, pady=(0, 10))
-    
-    def on_close():
-        root.destroy()
-        sys.exit(0)
-
-    btn_terminate = tk.Button(
-        footer_frame, text="TERMINATE CORE NODE", font=font_bold, bg="#7F1D1D", fg=text_color,
-        activebackground="#991B1B", activeforeground=text_color, bd=0, command=on_close
-    )
-    btn_terminate.pack(fill=tk.X, ipady=6)
-    root.protocol("WM_DELETE_WINDOW", on_close)
-
-    # Main Body
-    body_frame = tk.Frame(root, bg=bg_color)
-    body_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
-
-    # Left Panel
-    left_panel = tk.Frame(body_frame, bg=panel_color, width=220)
-    left_panel.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 5))
-    left_panel.pack_propagate(False)
-
-    tk.Label(left_panel, text="USER PROFILES", bg=panel_color, fg=text_color, font=font_bold).pack(pady=10)
-    ui_ctrl.user_listbox = tk.Listbox(left_panel, bg=bg_color, fg=text_color, font=font_main, bd=0, highlightthickness=0, selectbackground=accent_color)
-    ui_ctrl.user_listbox.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
-    ui_ctrl.user_listbox.bind('<<ListboxSelect>>', _on_user_select)
-
-    # Right Panel
-    right_panel = tk.Frame(body_frame, bg=bg_color)
-    right_panel.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=(5, 0))
-
-    details_frame = tk.Frame(right_panel, bg=panel_color)
-    details_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 5))
-    tk.Label(details_frame, text="PROFILE DATA METRICS (Raw DB Chunks)", bg=panel_color, fg=text_color, font=font_bold).pack(anchor=tk.W, padx=10, pady=(5, 0))
-    ui_ctrl.user_details = scrolledtext.ScrolledText(details_frame, bg=bg_color, fg=text_color, font=font_main, bd=0, state=tk.DISABLED)
-    ui_ctrl.user_details.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-
-    logs_frame = tk.Frame(right_panel, bg=panel_color)
-    logs_frame.pack(fill=tk.BOTH, expand=True, pady=(5, 0))
-    tk.Label(logs_frame, text="SYSTEM EVENT LOGS", bg=panel_color, fg=text_color, font=font_bold).pack(anchor=tk.W, padx=10, pady=(5, 0))
-    ui_ctrl.log_area = scrolledtext.ScrolledText(logs_frame, bg=bg_color, fg="#94A3B8", font=font_main, bd=0, state=tk.DISABLED)
-    ui_ctrl.log_area.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-
-
-    def delete_selected_user():
-        selection = ui_ctrl.user_listbox.curselection()
-        if not selection: return
+        self.title("Distill AI - Core Dashboard")
+        self.geometry("1000x700")
+        self.configure(fg_color="#1E222A")
         
-        user_id = ui_ctrl.user_listbox.get(selection[0])
+        self.selected_user_id = None
+
+        self.grid_columnconfigure(1, weight=1)
+        self.grid_rowconfigure(1, weight=1)
+
+        self.setup_ui()
         
-        if messagebox.askyesno("Подтверждение", f"Удалить все данные пользователя {user_id}?"):
-            ui_ctrl.db_reference.delete_user_notes(user_id)
-            ui_ctrl.known_users.remove(user_id)
-            ui_ctrl.user_listbox.delete(selection[0])
-            ui_ctrl.user_details.config(state=tk.NORMAL)
-            ui_ctrl.user_details.delete("1.0", tk.END)
-            ui_ctrl.user_details.config(state=tk.DISABLED)
-            ui_ctrl.log("DB", f"Deleted all data for {user_id}")
-            ui_ctrl.refresh_global_stats("SYNC", len(ui_ctrl.db_reference.collection.get()['ids']), len(ui_ctrl.known_users))
+        for user_id in ui_ctrl.known_users:
+            self.add_user_to_list(user_id)
+        self.refresh_global_stats(len(ui_ctrl.known_users))
 
-    btn_delete = tk.Button(
-        details_frame, text="🗑 Удалить данные", bg="#7F1D1D", fg="white", 
-        command=delete_selected_user, bd=0
-    )
-    btn_delete.pack(anchor=tk.E, padx=10, pady=(5, 0))
-    bot_thread = threading.Thread(target=bot_thread_target, daemon=True)
-    bot_thread.start()
+        self.bot_thread = threading.Thread(target=bot_thread_target, daemon=True)
+        self.bot_thread.start()
 
-    root.mainloop()
+    def setup_ui(self):
+        self.top_frame = ctk.CTkFrame(self, fg_color="#282C34", corner_radius=0)
+        self.top_frame.grid(row=0, column=0, columnspan=2, sticky="ew")
+        
+        self.proxy_switch = ctk.CTkSwitch(self.top_frame, text="Proxy: OFF", command=self.toggle_proxy)
+        self.proxy_switch.pack(side="left", padx=20, pady=15)
+
+        self.stats_label = ctk.CTkLabel(self.top_frame, text="Active Users: 0")
+        self.stats_label.pack(side="left", padx=20)
+
+        self.proxy_entry = ctk.CTkEntry(self.top_frame, width=300, placeholder_text="http://127.0.0.1:10808")
+        self.proxy_entry.pack(side="left", padx=20)
+
+        self.apply_btn = ctk.CTkButton(self.top_frame, text="APPLY", width=100, command=self.apply_config)
+        self.apply_btn.pack(side="left", padx=10)
+
+        self.sidebar_frame = ctk.CTkScrollableFrame(self, width=200, fg_color="#21252B", corner_radius=0)
+        self.sidebar_frame.grid(row=1, column=0, sticky="ns")
+        self.user_buttons = {}
+
+        self.main_frame = ctk.CTkFrame(self, fg_color="#1E222A", corner_radius=0)
+        self.main_frame.grid(row=1, column=1, sticky="nsew", padx=10, pady=10)
+        self.main_frame.grid_rowconfigure(0, weight=1)
+        self.main_frame.grid_columnconfigure(0, weight=1)
+
+        self.user_info_box = ctk.CTkTextbox(self.main_frame, font=("Consolas", 14), fg_color="#282C34")
+        self.user_info_box.grid(row=0, column=0, sticky="nsew", pady=(0, 10))
+        self.user_info_box.insert("0.0", "Выберите пользователя слева для просмотра информации.")
+        self.user_info_box.configure(state="disabled")
+
+        self.delete_btn = ctk.CTkButton(self.main_frame, text="🗑 Удалить данные пользователя", 
+                                        fg_color="#C62828", hover_color="#B71C1C", command=self.delete_user_data)
+        self.delete_btn.grid(row=1, column=0, sticky="ew", pady=(0, 10))
+
+        self.log_box = ctk.CTkTextbox(self.main_frame, height=150, font=("Consolas", 12), fg_color="#282C34")
+        self.log_box.grid(row=2, column=0, sticky="ew")
+        self.log_box.configure(state="disabled")
+
+        self.terminate_btn = ctk.CTkButton(self, text="TERMINATE CORE NODE", 
+                                           fg_color="#C62828", hover_color="#B71C1C", 
+                                           corner_radius=0, command=self.destroy)
+        self.terminate_btn.grid(row=2, column=0, columnspan=2, sticky="ew")
+
+    def toggle_proxy(self):
+        if self.proxy_switch.get():
+            self.proxy_switch.configure(text="Proxy: ON")
+            ui_ctrl.proxy_mode = True
+        else:
+            self.proxy_switch.configure(text="Proxy: OFF")
+            ui_ctrl.proxy_mode = False
+
+    def apply_config(self):
+        ui_ctrl.proxy_url = self.proxy_entry.get()
+        ui_ctrl.event_config_changed.set()
+        ui_ctrl.log("SYSTEM", f"Config applied. Proxy mode: {ui_ctrl.proxy_mode}")
+
+    def refresh_global_stats(self, count):
+        self.stats_label.configure(text=f"Active Users: {count}")
+
+    def add_user_to_list(self, user_id):
+        if user_id in self.user_buttons:
+            return
+        btn = ctk.CTkButton(self.sidebar_frame, text=str(user_id), anchor="w", 
+                            fg_color="transparent", hover_color="#2C313C", 
+                            command=lambda u=user_id: self.select_user(u))
+        btn.pack(fill="x", pady=2)
+        self.user_buttons[user_id] = btn
+
+    def select_user(self, user_id):
+        self.selected_user_id = user_id
+        for uid, btn in self.user_buttons.items():
+            if uid == user_id:
+                btn.configure(fg_color="#0984E3")
+            else:
+                btn.configure(fg_color="transparent")
+        self.load_user_info(user_id)
+
+    def load_user_info(self, user_id):
+        self.user_info_box.configure(state="normal")
+        self.user_info_box.delete("0.0", "end")
+        
+        info_text = f"Идентификатор пользователя (User ID): {user_id}\n"
+        info_text += "-" * 50 + "\n"
+        info_text += "Статус: Индексирован в векторной базе.\n"
+        info_text += "Нажмите кнопку ниже, чтобы полностью очистить все\n"
+        info_text += "заметки этого пользователя из локальной базы ChromaDB.\n\n"
+        
+        if ui_ctrl.db_reference:
+            try:
+                res = ui_ctrl.db_reference.collection.get(where={"user_id": user_id})
+                if res and res.get('ids') and res.get('documents'):
+                    info_text += f"Количество сохраненных заметок: {len(res['ids'])}\n"
+                    info_text += "=" * 50 + "\n"
+                    info_text += "СОДЕРЖИМОЕ ЗАМЕТОК:\n\n"
+                    
+                    for i, doc in enumerate(res['documents'], 1):
+                        info_text += f"--- Заметка {i} ---\n{doc}\n\n"
+                else:
+                    info_text += "Количество сохраненных заметок: 0\n"
+            except Exception as e:
+                info_text += f"[Ошибка чтения БД]: {e}\n"
+        
+        self.user_info_box.insert("0.0", info_text)
+        self.user_info_box.configure(state="disabled")
+
+    def delete_user_data(self):
+        if not self.selected_user_id:
+            return
+        
+        user_id = self.selected_user_id
+        if ui_ctrl.db_reference:
+            try:
+                ui_ctrl.db_reference.collection.delete(where={"user_id": user_id})
+                ui_ctrl.log("DB", f"Удалены все данные пользователя {user_id}")
+                self.load_user_info(user_id)
+            except Exception as e:
+                ui_ctrl.log("ERROR", f"Ошибка удаления данных: {e}")
+
+    def add_log(self, text):
+        self.after(0, self._add_log_safe, text)
+
+    def _add_log_safe(self, text):
+        self.log_box.configure(state="normal")
+        self.log_box.insert("end", text + "\n")
+        self.log_box.see("end")
+        self.log_box.configure(state="disabled")
+
+def run_gui(start_bot_thread):
+    ctk.set_appearance_mode("dark")
+    app = DashboardApp(start_bot_thread)
+    app.mainloop()
