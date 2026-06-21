@@ -155,7 +155,7 @@ async def run_bot():
     while True:
         ui_ctrl.event_config_changed.clear()
         
-        proxy = "http://127.0.0.1:10808"
+        proxy = os.getenv("PROXY_URL")
         ui_ctrl.log("SYSTEM", f"Initializing bot (Proxy: {proxy})")
         
         timeout = 60

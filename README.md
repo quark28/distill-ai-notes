@@ -58,6 +58,7 @@ pip install -r requirements.txt
 ```env
 TELEGRAM_TOKEN=ваш_токен_бота
 MISTRAL_API_KEY=ваш_ключ
+PROXY_URL=ваш_прокси
 ```
 
 ### 4. Запуск
